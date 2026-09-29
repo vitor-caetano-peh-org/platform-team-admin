@@ -1,0 +1,80 @@
+# CircleCI Configuration for Infrastructure Automation
+# This pipeline orchestrates Pulumi infrastructure deployments with preview/approval/apply workflow
+#
+# Required setup:
+#   - CircleCI context "PLATFORM_ADMIN" containing PULUMI_ACCESS_TOKEN
+#   - Pulumi.yaml, Pulumi.main.yaml, and requirements.txt at the repository root
+#   - The GitHub token is read from the encrypted stack config (Pulumi.main.yaml),
+#     so CircleCI only needs the Pulumi access token.
+
+version: 2.1
+
+orbs:
+  # Pulumi orb: provides the login, preview, and update commands
+  pulumi: pulumi/pulumi@2.1.0
+
+executors:
+  python:
+    docker:
+      - image: cimg/python:3.13
+
+commands:
+  # Check out the code, install the Pulumi CLI, log in, and install dependencies
+  setup:
+    steps:
+      - checkout
+      - pulumi/login
+      - run:
+          name: Install Pulumi program dependencies
+          command: pulumi install
+
+jobs:
+  # Preview job: Shows what changes will be made without applying them
+  # Provides CI feedback on infrastructure changes before approval
+  pulumi-preview:
+    executor: python
+    steps:
+      - setup
+      - pulumi/preview:
+          stack: main
+
+  # Update/Deploy job: Applies infrastructure changes
+  # Only runs after explicit approval on version tags
+  pulumi-up:
+    executor: python
+    steps:
+      - setup
+      - pulumi/update:
+          stack: main
+
+workflows:
+  # Preview workflow: Runs on every branch push (pull request branches and main)
+  # Provides infrastructure impact analysis without making changes
+  preview:
+    jobs:
+      - pulumi-preview:
+          context: PLATFORM_ADMIN
+
+  # Deployment workflow: Runs on version tags (v*)
+  # Executes full preview -> manual approval -> deploy pipeline
+  update:
+    jobs:
+      - pulumi-preview:
+          context: PLATFORM_ADMIN
+          filters: &tags_only
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+      # Manual approval step: Requires a human to click "Approve" in CircleCI
+      # Prevents accidental infrastructure changes
+      - approve-deployment:
+          type: approval
+          requires:
+            - pulumi-preview
+          filters: *tags_only
+      - pulumi-up:
+          context: PLATFORM_ADMIN
+          requires:
+            - approve-deployment
+          filters: *tags_only

@@ -1,0 +1,7 @@
+name: platform-team-admin
+description: GitHub repositories and organization membership for the platform team (Chapter 1)
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+main: pulumi_repo_create.py
